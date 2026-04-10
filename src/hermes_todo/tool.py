@@ -23,33 +23,42 @@ def todo_tool(
 
     Returns:
         JSON string with the full current list and summary metadata.
+        When all tasks are completed/cancelled and auto_clear is enabled,
+        returns an empty list with a "done" flag.
     """
     if store is None:
         return json.dumps({"error": "TodoStore not initialized"}, ensure_ascii=False)
+
+    had_items_before = store.has_items()
 
     if todos is not None:
         items = store.write(todos, merge)
     else:
         items = store.read()
 
+    # Detect auto-clear: had items before, now empty after a write
+    auto_cleared = had_items_before and not items and todos is not None
+
     pending = sum(1 for i in items if i["status"] == "pending")
     in_progress = sum(1 for i in items if i["status"] == "in_progress")
     completed = sum(1 for i in items if i["status"] == "completed")
     cancelled = sum(1 for i in items if i["status"] == "cancelled")
 
-    return json.dumps(
-        {
-            "todos": items,
-            "summary": {
-                "total": len(items),
-                "pending": pending,
-                "in_progress": in_progress,
-                "completed": completed,
-                "cancelled": cancelled,
-            },
+    result = {
+        "todos": items,
+        "summary": {
+            "total": len(items),
+            "pending": pending,
+            "in_progress": in_progress,
+            "completed": completed,
+            "cancelled": cancelled,
         },
-        ensure_ascii=False,
-    )
+    }
+
+    if auto_cleared:
+        result["done"] = True
+
+    return json.dumps(result, ensure_ascii=False)
 
 
 # =============================================================================

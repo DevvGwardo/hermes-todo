@@ -73,7 +73,7 @@ class TestFormatForInjection:
 
 class TestMergeMode:
     def test_update_existing_by_id(self):
-        store = TodoStore()
+        store = TodoStore(auto_clear=False)
         store.write([{"id": "1", "content": "Original", "status": "pending"}])
         store.write([{"id": "1", "status": "completed"}], merge=True)
         items = store.read()
@@ -133,6 +133,70 @@ class TestClear:
         store.clear()
         assert not store.has_items()
         assert store.read() == []
+
+
+class TestAutoClear:
+    def test_auto_clears_when_all_completed(self):
+        store = TodoStore()  # auto_clear=True by default
+        store.write([
+            {"id": "1", "content": "A", "status": "pending"},
+            {"id": "2", "content": "B", "status": "pending"},
+        ])
+        assert store.has_items()
+        # Mark all as completed
+        result = store.write([
+            {"id": "1", "status": "completed"},
+            {"id": "2", "status": "completed"},
+        ], merge=True)
+        assert not store.has_items()
+        assert result == []
+
+    def test_auto_clears_when_all_cancelled(self):
+        store = TodoStore()
+        store.write([{"id": "1", "content": "A", "status": "pending"}])
+        result = store.write([{"id": "1", "status": "cancelled"}], merge=True)
+        assert not store.has_items()
+
+    def test_auto_clears_when_mixed_completed_cancelled(self):
+        store = TodoStore()
+        store.write([
+            {"id": "1", "content": "A", "status": "pending"},
+            {"id": "2", "content": "B", "status": "pending"},
+        ])
+        result = store.write([
+            {"id": "1", "status": "completed"},
+            {"id": "2", "status": "cancelled"},
+        ], merge=True)
+        assert not store.has_items()
+
+    def test_no_clear_when_one_still_active(self):
+        store = TodoStore()
+        store.write([
+            {"id": "1", "content": "A", "status": "pending"},
+            {"id": "2", "content": "B", "status": "pending"},
+        ])
+        store.write([{"id": "1", "status": "completed"}], merge=True)
+        assert store.has_items()
+        assert len(store.read()) == 2
+
+    def test_no_clear_when_disabled(self):
+        store = TodoStore(auto_clear=False)
+        store.write([{"id": "1", "content": "A", "status": "pending"}])
+        store.write([{"id": "1", "status": "completed"}], merge=True)
+        assert store.has_items()
+        assert len(store.read()) == 1
+
+    def test_no_clear_on_replace_mode(self):
+        """Replace mode with completed items should auto-clear."""
+        store = TodoStore()
+        store.write([{"id": "1", "content": "A", "status": "completed"}])
+        assert not store.has_items()
+
+    def test_does_not_clear_empty_list(self):
+        """Writing to an empty store should not trigger auto-clear logic."""
+        store = TodoStore()
+        result = store.write([], merge=False)
+        assert result == []
 
 
 class TestOrderPreservation:

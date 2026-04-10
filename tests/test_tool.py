@@ -46,6 +46,52 @@ class TestTodoToolFunction:
         assert result["summary"]["cancelled"] == 1
 
 
+class TestAutoClearDone:
+    def test_done_flag_when_all_completed(self):
+        store = TodoStore()
+        store.write([{"id": "1", "content": "Task", "status": "pending"}])
+        result = json.loads(todo_tool(
+            todos=[{"id": "1", "status": "completed"}],
+            merge=True,
+            store=store,
+        ))
+        assert result["done"] is True
+        assert result["todos"] == []
+        assert result["summary"]["total"] == 0
+
+    def test_no_done_flag_when_still_active(self):
+        store = TodoStore()
+        store.write([
+            {"id": "1", "content": "A", "status": "pending"},
+            {"id": "2", "content": "B", "status": "pending"},
+        ])
+        result = json.loads(todo_tool(
+            todos=[{"id": "1", "status": "completed"}],
+            merge=True,
+            store=store,
+        ))
+        assert "done" not in result
+        assert len(result["todos"]) == 2
+
+    def test_no_done_flag_on_read(self):
+        """Reading an empty list shouldn't show done flag."""
+        store = TodoStore()
+        result = json.loads(todo_tool(store=store))
+        assert "done" not in result
+        assert result["todos"] == []
+
+    def test_no_done_flag_when_auto_clear_disabled(self):
+        store = TodoStore(auto_clear=False)
+        store.write([{"id": "1", "content": "Task", "status": "pending"}])
+        result = json.loads(todo_tool(
+            todos=[{"id": "1", "status": "completed"}],
+            merge=True,
+            store=store,
+        ))
+        assert "done" not in result
+        assert len(result["todos"]) == 1
+
+
 class TestSchema:
     def test_schema_is_valid_dict(self):
         assert isinstance(TODO_SCHEMA, dict)

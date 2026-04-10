@@ -17,8 +17,9 @@ class TodoStore:
       - status: pending | in_progress | completed | cancelled
     """
 
-    def __init__(self) -> None:
+    def __init__(self, auto_clear: bool = True) -> None:
         self._items: List[Dict[str, str]] = []
+        self.auto_clear = auto_clear
 
     def write(
         self, todos: List[Dict[str, Any]], merge: bool = False
@@ -64,7 +65,16 @@ class TodoStore:
                     rebuilt.append(current)
                     seen.add(current["id"])
             self._items = rebuilt
+
+        # Auto-clear when all tasks are completed or cancelled
+        if self.auto_clear and self._items and self._all_done():
+            self._items.clear()
+
         return self.read()
+
+    def _all_done(self) -> bool:
+        """Check if every item is completed or cancelled (no active work)."""
+        return all(item["status"] in ("completed", "cancelled") for item in self._items)
 
     def read(self) -> List[Dict[str, str]]:
         """Return a copy of the current list."""
