@@ -2,8 +2,6 @@
 
 import json
 
-import pytest
-
 from hermes_todo import TodoStore, todo_tool, TODO_SCHEMA
 
 
@@ -44,6 +42,32 @@ class TestTodoToolFunction:
         assert result["summary"]["in_progress"] == 1
         assert result["summary"]["completed"] == 1
         assert result["summary"]["cancelled"] == 1
+
+    def test_prompt_auto_launches_when_two_tasks_are_detected(self):
+        store = TodoStore()
+        result = json.loads(
+            todo_tool(
+                prompt="Update the README and tests",
+                store=store,
+            )
+        )
+        assert result["prompt_analysis"]["launched"] is True
+        assert result["prompt_analysis"]["task_count"] == 2
+        assert result["summary"]["total"] == 2
+        assert result["todos"][0]["status"] == "in_progress"
+        assert "HERMES TODO" in result["cli"]
+
+    def test_prompt_does_not_launch_for_single_task(self):
+        store = TodoStore()
+        result = json.loads(
+            todo_tool(
+                prompt="Review the diff",
+                store=store,
+            )
+        )
+        assert result["prompt_analysis"]["launched"] is False
+        assert result["prompt_analysis"]["task_count"] == 1
+        assert result["summary"]["total"] == 0
 
 
 class TestAutoClearDone:
@@ -101,5 +125,7 @@ class TestSchema:
 
     def test_schema_has_required_fields(self):
         props = TODO_SCHEMA["parameters"]["properties"]
+        assert "prompt" in props
         assert "todos" in props
+        assert "min_tasks" in props
         assert "merge" in props

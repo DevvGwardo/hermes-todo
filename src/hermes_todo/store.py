@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import textwrap
 from typing import Any, Dict, List, Optional
 
+from .planner import build_todos_from_prompt
 from .types import VALID_STATUSES
 
 
@@ -117,6 +119,98 @@ class TodoStore:
             lines.append(f"- {marker} {item['id']}. {item['content']} ({item['status']})")
 
         return "\n".join(lines)
+
+    def format_for_cli(self, width: int = 72) -> str:
+        """
+        Render the full todo list for a terminal-friendly display.
+
+        Unlike format_for_injection(), this includes completed and cancelled
+        items because the CLI view is meant for humans, not prompt compression.
+        """
+        width = max(48, min(width, 120))
+        inner_width = width - 4
+
+        def border(char: str = "-") -> str:
+            return f"+{char * (width - 2)}+"
+
+        def row(text: str = "") -> str:
+            return f"| {text.ljust(inner_width)} |"
+
+        def wrapped_rows(prefix: str, content: str) -> List[str]:
+            wrap_width = max(12, inner_width - len(prefix))
+            chunks = textwrap.wrap(
+                content,
+                width=wrap_width,
+                break_long_words=False,
+                break_on_hyphens=False,
+            ) or [""]
+            rows = [row(f"{prefix}{chunks[0]}")]
+            indent = " " * len(prefix)
+            for chunk in chunks[1:]:
+                rows.append(row(f"{indent}{chunk}"))
+            return rows
+
+        pending = sum(1 for item in self._items if item["status"] == "pending")
+        in_progress = sum(1 for item in self._items if item["status"] == "in_progress")
+        completed = sum(1 for item in self._items if item["status"] == "completed")
+        cancelled = sum(1 for item in self._items if item["status"] == "cancelled")
+
+        lines = [
+            border("="),
+            row("HERMES TODO"),
+        ]
+
+        if not self._items:
+            lines.extend(
+                [
+                    border(),
+                    row("No tasks yet."),
+                    row("Call todo_tool(prompt=...) or seed_from_prompt(...) to launch one."),
+                    border("="),
+                ]
+            )
+            return "\n".join(lines)
+
+        summary = (
+            f"{len(self._items)} tasks | active {in_progress} | pending {pending} | "
+            f"done {completed} | cancelled {cancelled}"
+        )
+        markers = {
+            "completed": "[x]",
+            "in_progress": "[>]",
+            "pending": "[ ]",
+            "cancelled": "[~]",
+        }
+
+        lines.extend([row(summary), border()])
+        for item in self._items:
+            prefix = f"{markers.get(item['status'], '[?]')} {item['id']}. "
+            lines.extend(wrapped_rows(prefix, item["content"]))
+        lines.append(border("="))
+
+        return "\n".join(lines)
+
+    def seed_from_prompt(
+        self,
+        prompt: str,
+        min_tasks: int = 2,
+        activate_first: bool = True,
+        replace: bool = True,
+    ) -> List[Dict[str, str]]:
+        """
+        Build a todo list from a raw user prompt and write it to the store.
+
+        Returns the current list unchanged when the prompt does not contain
+        enough distinct tasks to meet the threshold.
+        """
+        todos = build_todos_from_prompt(
+            prompt,
+            min_tasks=min_tasks,
+            activate_first=activate_first,
+        )
+        if not todos:
+            return self.read()
+        return self.write(todos, merge=not replace)
 
     def clear(self) -> None:
         """Remove all items."""

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hermes-todo"
-version = "0.1.0"
+version = "0.2.0"
 description = "In-memory task list for AI agents — zero dependencies, OpenAI function-calling ready"
 readme = "README.md"
 license = "MIT"

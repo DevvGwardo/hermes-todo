@@ -71,6 +71,44 @@ class TestFormatForInjection:
         assert "context compression" in text.lower()
 
 
+class TestFormatForCli:
+    def test_empty_cli_view_has_empty_state(self):
+        store = TodoStore()
+        text = store.format_for_cli()
+        assert "HERMES TODO" in text
+        assert "No tasks yet." in text
+
+    def test_cli_view_includes_all_statuses(self):
+        store = TodoStore(auto_clear=False)
+        store.write(
+            [
+                {"id": "1", "content": "Inspect repo", "status": "in_progress"},
+                {"id": "2", "content": "Write tests", "status": "pending"},
+                {"id": "3", "content": "Ship docs", "status": "completed"},
+                {"id": "4", "content": "Skip legacy task", "status": "cancelled"},
+            ]
+        )
+        text = store.format_for_cli(width=64)
+        assert "[>]" in text
+        assert "[ ]" in text
+        assert "[x]" in text
+        assert "[~]" in text
+        assert "active 1" in text
+
+
+class TestSeedFromPrompt:
+    def test_seed_from_prompt_builds_list(self):
+        store = TodoStore()
+        items = store.seed_from_prompt("Update the docs and run tests")
+        assert len(items) == 2
+        assert items[0]["status"] == "in_progress"
+
+    def test_seed_from_prompt_ignores_single_task(self):
+        store = TodoStore()
+        items = store.seed_from_prompt("Review the diff")
+        assert items == []
+
+
 class TestMergeMode:
     def test_update_existing_by_id(self):
         store = TodoStore(auto_clear=False)

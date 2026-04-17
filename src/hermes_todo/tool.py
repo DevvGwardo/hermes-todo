@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
+from .planner import build_todos_from_tasks, extract_tasks
 from .store import TodoStore
 
 
 def todo_tool(
     todos: Optional[List[Dict[str, Any]]] = None,
+    prompt: Optional[str] = None,
+    min_tasks: int = 2,
     merge: bool = False,
     store: Optional[TodoStore] = None,
 ) -> str:
@@ -18,6 +21,10 @@ def todo_tool(
 
     Args:
         todos: if provided, write these items. If None, read current list.
+        prompt: optional raw user prompt. When supplied without todos, the
+            tool extracts tasks and auto-launches a list if it finds
+            at least ``min_tasks`` distinct tasks.
+        min_tasks: threshold for prompt-triggered auto-launch.
         merge: if True, update by id. If False (default), replace entire list.
         store: the TodoStore instance (required).
 
@@ -30,9 +37,18 @@ def todo_tool(
         return json.dumps({"error": "TodoStore not initialized"}, ensure_ascii=False)
 
     had_items_before = store.has_items()
+    prompt_tasks: List[str] = []
+    launched_from_prompt = False
 
     if todos is not None:
         items = store.write(todos, merge)
+    elif prompt is not None:
+        prompt_tasks = extract_tasks(prompt)
+        if len(prompt_tasks) >= max(1, min_tasks):
+            items = store.write(build_todos_from_tasks(prompt_tasks), merge=False)
+            launched_from_prompt = True
+        else:
+            items = store.read()
     else:
         items = store.read()
 
@@ -53,7 +69,16 @@ def todo_tool(
             "completed": completed,
             "cancelled": cancelled,
         },
+        "cli": store.format_for_cli(),
+        "injection": store.format_for_injection(),
     }
+
+    if prompt is not None:
+        result["prompt_analysis"] = {
+            "task_count": len(prompt_tasks),
+            "launch_threshold": max(1, min_tasks),
+            "launched": launched_from_prompt,
+        }
 
     if auto_cleared:
         result["done"] = True
@@ -71,22 +96,34 @@ TODO_SCHEMA: Dict[str, Any] = {
     "name": "todo",
     "description": (
         "Manage your task list for the current session. Use for complex tasks "
-        "with 3+ steps or when the user provides multiple tasks. "
-        "Call with no parameters to read the current list.\n\n"
+        "with 2+ distinct tasks or steps. Call with no parameters to read the "
+        "current list. Fastest path: pass the raw user request as 'prompt' and "
+        "this tool will auto-launch a todo list whenever it detects at least "
+        "two tasks.\n\n"
         "Writing:\n"
+        "- Provide 'prompt' to auto-create a fresh list from the user request\n"
         "- Provide 'todos' array to create/update items\n"
         "- merge=false (default): replace the entire list with a fresh plan\n"
-        "- merge=true: update existing items by id, add any new ones\n\n"
+        "- merge=true: update existing items by id, add any new ones\n"
+        "- 'min_tasks' controls how many detected tasks are required before "
+        "prompt auto-launch triggers (default 2)\n\n"
         "Each item: {id: string, content: string, "
         "status: pending|in_progress|completed|cancelled}\n"
         "List order is priority. Only ONE item in_progress at a time.\n"
         "Mark items completed immediately when done. If something fails, "
         "cancel it and add a revised item.\n\n"
-        "Always returns the full current list."
+        "Always returns the full current list plus CLI-ready rendering."
     ),
     "parameters": {
         "type": "object",
         "properties": {
+            "prompt": {
+                "type": "string",
+                "description": (
+                    "Raw user request. Use this to auto-create a todo list from "
+                    "the prompt when it contains multiple tasks."
+                ),
+            },
             "todos": {
                 "type": "array",
                 "description": "Task items to write. Omit to read current list.",
@@ -110,11 +147,21 @@ TODO_SCHEMA: Dict[str, Any] = {
                     "required": ["id", "content", "status"],
                 },
             },
+            "min_tasks": {
+                "type": "integer",
+                "description": (
+                    "Minimum number of detected tasks required before a raw "
+                    "prompt auto-launches a list."
+                ),
+                "default": 2,
+                "minimum": 1,
+            },
             "merge": {
                 "type": "boolean",
                 "description": (
                     "true: update existing items by id, add new ones. "
-                    "false (default): replace the entire list."
+                    "false (default): replace the entire list. Ignored when "
+                    "a raw prompt is used to auto-create a list."
                 ),
                 "default": False,
             },
