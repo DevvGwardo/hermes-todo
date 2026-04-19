@@ -214,10 +214,18 @@ result = todo_tool(
 
 ### Integrating with hermes-agent
 
-```python
-import json
+`todo_tool()` returns JSON. Hermes can only show the full task list in its CLI
+if the host explicitly renders the returned `cli` block. Registering the tool
+alone is not enough.
 
-from hermes_todo import TodoStore, todo_tool, TODO_SCHEMA, should_track_prompt
+```python
+from hermes_todo import (
+    TODO_SCHEMA,
+    TodoStore,
+    should_track_prompt,
+    todo_cli_from_result,
+    todo_tool,
+)
 from tools.registry import registry
 
 registry.register(
@@ -237,8 +245,18 @@ registry.register(
 
 # Example pre-tool hook:
 # if should_track_prompt(user_prompt):
-#     payload = json.loads(todo_tool(prompt=user_prompt, store=store))
-#     cli.print(payload["cli"])
+#     result = todo_tool(prompt=user_prompt, store=store)
+#     cli_text = todo_cli_from_result(result)
+#     if cli_text:
+#         cli.print(cli_text)
+
+# Example tool-complete hook inside Hermes' CLI layer:
+# def on_tool_complete(function_name: str, function_result: str) -> None:
+#     if function_name != "todo":
+#         return
+#     cli_text = todo_cli_from_result(function_result)
+#     if cli_text:
+#         cli.print(cli_text)
 ```
 
 ---
@@ -261,6 +279,12 @@ registry.register(
 
 Single entry point. Reads when no write input is provided, writes explicit todos when `todos` is passed, or auto-launches a list from raw prompt text when `prompt` contains at least `min_tasks` tasks. Returns JSON string with full list, summary counts, a CLI rendering, and a `done` flag when auto-clear empties the list.
 
+### `todo_cli_from_result(result)`
+
+Parse a `todo_tool()` JSON result and return the terminal-ready task list block
+from its `cli` field. Use this in Hermes' tool-complete or pre-tool hooks when
+you want the actual CLI to print the task list.
+
 ### `TODO_SCHEMA`
 
 OpenAI function-calling schema dict. Includes behavioral guidance in the description.
@@ -278,7 +302,7 @@ OpenAI function-calling schema dict. Includes behavioral guidance in the descrip
 3. **`todo_tool`** routes to prompt auto-launch, explicit write, or read mode
 4. **`TodoStore`** validates, merges or replaces, and manages state transitions
 5. **Auto-clear** kicks in when all tasks reach a terminal state (`completed`/`cancelled`)
-6. **CLI rendering** via `format_for_cli()` gives Hermes a clean terminal view, while `format_for_injection()` keeps the agent context lean
+6. **CLI rendering** via `format_for_cli()` gives Hermes a clean terminal view, while `todo_cli_from_result()` is the host-side hook that actually prints it in Hermes and `format_for_injection()` keeps the agent context lean
 
 ---
 

@@ -2,7 +2,7 @@
 
 import json
 
-from hermes_todo import TodoStore, todo_tool, TODO_SCHEMA
+from hermes_todo import TODO_SCHEMA, TodoStore, todo_cli_from_result, todo_tool
 
 
 class TestTodoToolFunction:
@@ -68,6 +68,23 @@ class TestTodoToolFunction:
         assert result["prompt_analysis"]["launched"] is False
         assert result["prompt_analysis"]["task_count"] == 1
         assert result["summary"]["total"] == 0
+
+    def test_cli_text_can_be_extracted_from_tool_result(self):
+        store = TodoStore()
+        result = todo_tool(
+            prompt="Update the README and tests",
+            store=store,
+        )
+        cli = todo_cli_from_result(result)
+        assert cli is not None
+        assert "HERMES TODO" in cli
+        assert "[>]" in cli
+
+    def test_cli_text_extraction_returns_none_for_invalid_json(self):
+        assert todo_cli_from_result("not json") is None
+
+    def test_cli_text_extraction_returns_none_when_cli_missing(self):
+        assert todo_cli_from_result(json.dumps({"todos": []})) is None
 
 
 class TestAutoClearDone:

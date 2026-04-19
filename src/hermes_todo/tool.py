@@ -9,6 +9,23 @@ from .planner import build_todos_from_tasks, extract_tasks
 from .store import TodoStore
 
 
+def todo_cli_from_result(result: str) -> Optional[str]:
+    """
+    Extract the terminal-ready task list from a ``todo_tool`` JSON result.
+
+    This is the integration point a host CLI should use if it wants to
+    render the full task list after the tool runs. Returns ``None`` when the
+    payload is invalid JSON or does not include a CLI block.
+    """
+    try:
+        payload = json.loads(result)
+    except (TypeError, json.JSONDecodeError):
+        return None
+
+    cli = payload.get("cli")
+    return cli if isinstance(cli, str) and cli else None
+
+
 def todo_tool(
     todos: Optional[List[Dict[str, Any]]] = None,
     prompt: Optional[str] = None,
