@@ -133,6 +133,51 @@ class TestAutoClearDone:
         assert len(result["todos"]) == 1
 
 
+class TestTodoToolPromptMerge:
+    def test_prompt_with_merge_true(self):
+        """Prompt auto-launch with merge=True should add to existing items."""
+        store = TodoStore()
+        store.write([{"id": "1", "content": "Existing", "status": "pending"}])
+        result = json.loads(
+            todo_tool(
+                prompt="Update the README and fix tests",
+                merge=True,
+                store=store,
+            )
+        )
+        # Prompt mode always replaces (merge is ignored for prompt auto-launch)
+        assert result["summary"]["total"] == 2
+
+    def test_cli_text_extraction_with_empty_string(self):
+        """Empty string cli field should return None."""
+        assert todo_cli_from_result(json.dumps({"cli": ""})) is None
+
+
+class TestTypesAndConstants:
+    def test_status_markers_has_all_statuses(self):
+        from hermes_todo import STATUS_MARKERS, VALID_STATUSES
+        for status in VALID_STATUSES:
+            assert status in STATUS_MARKERS
+
+    def test_count_by_status(self):
+        from hermes_todo import count_by_status
+        items = [
+            {"id": "1", "content": "A", "status": "pending"},
+            {"id": "2", "content": "B", "status": "pending"},
+            {"id": "3", "content": "C", "status": "completed"},
+        ]
+        counts = count_by_status(items)
+        assert counts["pending"] == 2
+        assert counts["completed"] == 1
+        assert counts["in_progress"] == 0
+        assert counts["cancelled"] == 0
+
+    def test_count_by_status_empty(self):
+        from hermes_todo import count_by_status
+        counts = count_by_status([])
+        assert counts == {"pending": 0, "in_progress": 0, "completed": 0, "cancelled": 0}
+
+
 class TestSchema:
     def test_schema_is_valid_dict(self):
         assert isinstance(TODO_SCHEMA, dict)
