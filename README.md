@@ -136,8 +136,8 @@ print(store.format_for_cli())
 # | HERMES TODO                                                          |
 # | 2 tasks | active 1 | pending 1 | done 0 | cancelled 0               |
 # +----------------------------------------------------------------------+
-# | [>] 1. Ship v1                                                       |
-# | [ ] 2. Write docs                                                    |
+# | [ ] 1. Ship v1                                                       |
+# | [>] 2. Write docs                                                    |
 # +======================================================================+
 ```
 
@@ -271,13 +271,13 @@ registry.register(
 | `read()` | Returns a copy of the current list. |
 | `has_items()` | Returns `True` if the list has any items. |
 | `seed_from_prompt(prompt, min_tasks=2)` | Build and write a todo list from raw user text when enough tasks are detected. |
-| `format_for_cli(width=72)` | Render the full list as a terminal-friendly block. |
+| `format_for_cli(width=72, compact=False)` | Render the full list as a terminal-friendly block. Pass `compact=True` for a simpler unicode-glyph format. |
 | `format_for_injection()` | Renders active items for context injection. Returns `None` if empty. |
 | `clear()` | Removes all items. |
 
 ### `todo_tool(todos=None, prompt=None, min_tasks=2, merge=False, store=None)`
 
-Single entry point. Reads when no write input is provided, writes explicit todos when `todos` is passed, or auto-launches a list from raw prompt text when `prompt` contains at least `min_tasks` tasks. Returns JSON string with full list, summary counts, a CLI rendering, and a `done` flag when auto-clear empties the list.
+Single entry point. Reads when no write input is provided, writes explicit todos when `todos` is passed, or auto-launches a list from raw prompt text when `prompt` contains at least `min_tasks` tasks. Returns JSON string with full list, summary counts, a CLI rendering, a `prompt_analysis` block (when `prompt` was provided), a `done` flag when auto-clear empties the list, and an injection-friendly rendering.
 
 ### `todo_cli_from_result(result)`
 

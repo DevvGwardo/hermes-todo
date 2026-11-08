@@ -3,10 +3,44 @@
 from __future__ import annotations
 
 import textwrap
+import warnings
 from typing import Any, Dict, List, Optional
 
 from .planner import build_todos_from_prompt
-from .types import VALID_STATUSES
+from .types import STATUS_MARKERS, VALID_STATUSES, count_by_status
+
+# Terminal statuses — items in these states are considered done
+DONE_STATUSES = {"completed", "cancelled"}
+# Active statuses — items still needing work
+ACTIVE_STATUSES = {"pending", "in_progress"}
+
+HEADER_TITLE = "HERMES TODO"
+
+
+def validate_todo_item(item: Dict[str, Any]) -> Dict[str, str]:
+    """
+    Validate and normalize a todo item.
+
+    Ensures required fields exist and status is valid.
+    Returns a clean dict with only {id, content, status}.
+    """
+    item_id = str(item.get("id", "")).strip()
+    if not item_id:
+        item_id = "?"
+
+    content = item.get("content")
+    if content is None:
+        content = ""
+    else:
+        content = str(content).strip()
+    if not content:
+        content = "(no description)"
+
+    status = str(item.get("status", "pending")).strip().lower()
+    if status not in VALID_STATUSES:
+        status = "pending"
+
+    return {"id": item_id, "content": content, "status": status}
 
 
 class TodoStore:
@@ -19,9 +53,11 @@ class TodoStore:
       - status: pending | in_progress | completed | cancelled
     """
 
-    def __init__(self, auto_clear: bool = True) -> None:
+    def __init__(self, auto_clear: bool = True, max_items: Optional[int] = None) -> None:
         self._items: List[Dict[str, str]] = []
         self.auto_clear = auto_clear
+        self.max_items = max_items
+        self._warned_exceeded = False
 
     def write(
         self, todos: List[Dict[str, Any]], merge: bool = False
@@ -35,8 +71,8 @@ class TodoStore:
                    existing items by id and append new ones.
         """
         if not merge:
-            # Replace mode: new list entirely
-            self._items = [self._validate(t) for t in todos]
+            # Replace mode: new list entirely (dedup keeps last occurrence of each id)
+            self._items = [validate_todo_item(t) for t in self._dedupe_by_id(todos)]
         else:
             # Merge mode: update existing items by id, append new ones
             existing = {item["id"]: item for item in self._items}
@@ -55,7 +91,7 @@ class TodoStore:
                             existing[item_id]["status"] = status
                 else:
                     # New item — validate fully and append to end
-                    validated = self._validate(t)
+                    validated = validate_todo_item(t)
                     existing[validated["id"]] = validated
                     self._items.append(validated)
             # Rebuild _items preserving order for existing items
@@ -68,6 +104,14 @@ class TodoStore:
                     seen.add(current["id"])
             self._items = rebuilt
 
+        # Warn when write would exceed max_items (one-time per instance)
+        if self.max_items is not None and len(self._items) > self.max_items and not self._warned_exceeded:
+            warnings.warn(
+                f"TodoStore has {len(self._items)} items, "
+                f"which exceeds max_items={self.max_items}"
+            )
+            self._warned_exceeded = True
+
         # Auto-clear when all tasks are completed or cancelled
         if self.auto_clear and self._items and self._all_done():
             self._items.clear()
@@ -76,7 +120,7 @@ class TodoStore:
 
     def _all_done(self) -> bool:
         """Check if every item is completed or cancelled (no active work)."""
-        return all(item["status"] in ("completed", "cancelled") for item in self._items)
+        return all(item["status"] in DONE_STATUSES for item in self._items)
 
     def read(self) -> List[Dict[str, str]]:
         """Return a copy of the current list."""
@@ -85,6 +129,17 @@ class TodoStore:
     def has_items(self) -> bool:
         """Check if there are any items in the list."""
         return len(self._items) > 0
+
+    def get_by_id(self, id: str) -> Optional[Dict[str, str]]:
+        """Return a single item by id, or None if not found."""
+        for item in self._items:
+            if item["id"] == id:
+                return item.copy()
+        return None
+
+    def filter_by_status(self, status: str) -> List[Dict[str, str]]:
+        """Return a copy of items matching the given status."""
+        return [item.copy() for item in self._items if item["status"] == status]
 
     def format_for_injection(self) -> Optional[str]:
         """
@@ -96,37 +151,38 @@ class TodoStore:
         if not self._items:
             return None
 
-        markers = {
-            "completed": "[x]",
-            "in_progress": "[>]",
-            "pending": "[ ]",
-            "cancelled": "[~]",
-        }
-
         # Only inject pending/in_progress items — completed/cancelled ones
         # cause the model to re-do finished work after compression.
         active_items = [
             item
             for item in self._items
-            if item["status"] in ("pending", "in_progress")
+            if item["status"] in ACTIVE_STATUSES
         ]
         if not active_items:
             return None
 
         lines = ["[Your active task list was preserved across context compression]"]
         for item in active_items:
-            marker = markers.get(item["status"], "[?]")
+            marker = STATUS_MARKERS.get(item["status"], "[?]")
             lines.append(f"- {marker} {item['id']}. {item['content']} ({item['status']})")
 
         return "\n".join(lines)
 
-    def format_for_cli(self, width: int = 72) -> str:
+    def format_for_cli(self, width: int = 72, compact: bool = False) -> str:
         """
         Render the full todo list for a terminal-friendly display.
 
         Unlike format_for_injection(), this includes completed and cancelled
         items because the CLI view is meant for humans, not prompt compression.
+
+        When compact=True, renders a simpler unicode-glyph format instead of
+        the boxed ASCII-art format.
         """
+        if compact:
+            return self._format_compact()
+        return self._format_boxed(width)
+
+    def _format_boxed(self, width: int = 72) -> str:
         width = max(48, min(width, 120))
         inner_width = width - 4
 
@@ -150,14 +206,11 @@ class TodoStore:
                 rows.append(row(f"{indent}{chunk}"))
             return rows
 
-        pending = sum(1 for item in self._items if item["status"] == "pending")
-        in_progress = sum(1 for item in self._items if item["status"] == "in_progress")
-        completed = sum(1 for item in self._items if item["status"] == "completed")
-        cancelled = sum(1 for item in self._items if item["status"] == "cancelled")
+        counts = count_by_status(self._items)
 
         lines = [
             border("="),
-            row("HERMES TODO"),
+            row(HEADER_TITLE),
         ]
 
         if not self._items:
@@ -172,22 +225,31 @@ class TodoStore:
             return "\n".join(lines)
 
         summary = (
-            f"{len(self._items)} tasks | active {in_progress} | pending {pending} | "
-            f"done {completed} | cancelled {cancelled}"
+            f"{len(self._items)} tasks | active {counts['in_progress']} | "
+            f"pending {counts['pending']} | done {counts['completed']} | "
+            f"cancelled {counts['cancelled']}"
         )
-        markers = {
-            "completed": "[x]",
-            "in_progress": "[>]",
-            "pending": "[ ]",
-            "cancelled": "[~]",
-        }
 
         lines.extend([row(summary), border()])
         for item in self._items:
-            prefix = f"{markers.get(item['status'], '[?]')} {item['id']}. "
+            prefix = f"{STATUS_MARKERS.get(item['status'], '[?]')} {item['id']}. "
             lines.extend(wrapped_rows(prefix, item["content"]))
         lines.append(border("="))
 
+        return "\n".join(lines)
+
+    def _format_compact(self) -> str:
+        """Render the task list in a compact unicode-glyph format."""
+        counts = count_by_status(self._items)
+        total = len(self._items)
+        done = counts["completed"] + counts["cancelled"]
+        header = f"\U0001f4cb Todo ({done}/{total} done)"
+        if counts["cancelled"]:
+            header += f", {counts['cancelled']} cancelled"
+        lines = [header]
+        for item in self._items:
+            marker = STATUS_MARKERS.get(item["status"], "[?]")
+            lines.append(f"  {marker} {item['id']}. {item['content']}")
         return "\n".join(lines)
 
     def seed_from_prompt(
@@ -210,6 +272,21 @@ class TodoStore:
         )
         if not todos:
             return self.read()
+
+        if not replace:
+            # Avoid ID collisions with existing items when merging
+            existing_ids = {item["id"] for item in self._items}
+            offset = len(self._items)
+            for i, todo in enumerate(todos):
+                new_id = str(offset + i + 1)
+                # If the new ID still collides (existing IDs were non-numeric),
+                # keep incrementing until we find a free one.
+                while new_id in existing_ids:
+                    offset += 1
+                    new_id = str(offset + i + 1)
+                todo["id"] = new_id
+                existing_ids.add(new_id)
+
         return self.write(todos, merge=not replace)
 
     def clear(self) -> None:
@@ -217,23 +294,10 @@ class TodoStore:
         self._items.clear()
 
     @staticmethod
-    def _validate(item: Dict[str, Any]) -> Dict[str, str]:
-        """
-        Validate and normalize a todo item.
-
-        Ensures required fields exist and status is valid.
-        Returns a clean dict with only {id, content, status}.
-        """
-        item_id = str(item.get("id", "")).strip()
-        if not item_id:
-            item_id = "?"
-
-        content = str(item.get("content", "")).strip()
-        if not content:
-            content = "(no description)"
-
-        status = str(item.get("status", "pending")).strip().lower()
-        if status not in VALID_STATUSES:
-            status = "pending"
-
-        return {"id": item_id, "content": content, "status": status}
+    def _dedupe_by_id(todos: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Collapse duplicate ids, keeping the last occurrence in its position."""
+        last_index: Dict[str, int] = {}
+        for i, item in enumerate(todos):
+            item_id = str(item.get("id", "")).strip() or "?"
+            last_index[item_id] = i
+        return [todos[i] for i in sorted(last_index.values())]

@@ -1,6 +1,6 @@
 """Tests for the TodoStore class."""
 
-import pytest
+from hermes_todo.store import validate_todo_item
 
 from hermes_todo import TodoStore
 
@@ -192,7 +192,7 @@ class TestAutoClear:
     def test_auto_clears_when_all_cancelled(self):
         store = TodoStore()
         store.write([{"id": "1", "content": "A", "status": "pending"}])
-        result = store.write([{"id": "1", "status": "cancelled"}], merge=True)
+        _result = store.write([{"id": "1", "status": "cancelled"}], merge=True)
         assert not store.has_items()
 
     def test_auto_clears_when_mixed_completed_cancelled(self):
@@ -201,7 +201,7 @@ class TestAutoClear:
             {"id": "1", "content": "A", "status": "pending"},
             {"id": "2", "content": "B", "status": "pending"},
         ])
-        result = store.write([
+        _result = store.write([
             {"id": "1", "status": "completed"},
             {"id": "2", "status": "cancelled"},
         ], merge=True)
@@ -235,6 +235,82 @@ class TestAutoClear:
         store = TodoStore()
         result = store.write([], merge=False)
         assert result == []
+
+
+class TestValidateTodoItem:
+    def test_validates_complete_item(self):
+        result = validate_todo_item({"id": "1", "content": "Task", "status": "pending"})
+        assert result == {"id": "1", "content": "Task", "status": "pending"}
+
+    def test_missing_id_gets_placeholder(self):
+        result = validate_todo_item({"content": "Task", "status": "pending"})
+        assert result["id"] == "?"
+
+    def test_missing_content_gets_placeholder(self):
+        result = validate_todo_item({"id": "1", "status": "pending"})
+        assert result["content"] == "(no description)"
+
+    def test_invalid_status_defaults_to_pending(self):
+        result = validate_todo_item({"id": "1", "content": "Task", "status": "invalid"})
+        assert result["status"] == "pending"
+
+    def test_strips_whitespace(self):
+        result = validate_todo_item({"id": " 1 ", "content": " Task ", "status": " PENDING "})
+        assert result == {"id": "1", "content": "Task", "status": "pending"}
+
+
+class TestSeedFromPromptMerge:
+    def test_seed_with_replace_false_avoids_id_collision(self):
+        store = TodoStore()
+        store.write([{"id": "1", "content": "Existing", "status": "pending"}])
+        items = store.seed_from_prompt("Update the docs and run tests", replace=False)
+        assert len(items) == 3
+        ids = [item["id"] for item in items]
+        assert "1" in ids
+        assert "2" in ids
+        assert "3" in ids
+        # Existing item should still be there
+        assert items[0]["content"] == "Existing"
+
+    def test_seed_with_replace_false_resolves_id_collision(self):
+        """When existing IDs overlap with auto-generated ones, they should be offset."""
+        store = TodoStore()
+        store.write([
+            {"id": "1", "content": "First", "status": "pending"},
+            {"id": "2", "content": "Second", "status": "pending"},
+        ])
+        items = store.seed_from_prompt("Update the docs and run tests", replace=False)
+        assert len(items) == 4
+        ids = [item["id"] for item in items]
+        # New items should get IDs 3 and 4, not colliding with 1 and 2
+        assert ids == ["1", "2", "3", "4"]
+
+    def test_seed_with_replace_false_preserves_existing_content(self):
+        store = TodoStore()
+        store.write([{"id": "1", "content": "Original", "status": "in_progress"}])
+        items = store.seed_from_prompt("Fix bugs and write tests", replace=False)
+        original = [i for i in items if i["id"] == "1"][0]
+        assert original["content"] == "Original"
+        assert original["status"] == "in_progress"
+
+
+class TestFormatForCliWrapping:
+    def test_wraps_long_content(self):
+        store = TodoStore(auto_clear=False)
+        # Use a sentence so textwrap can break at word boundaries
+        long_content = "Implement the authentication module and write comprehensive unit tests for it"
+        store.write([{"id": "1", "content": long_content, "status": "pending"}])
+        text = store.format_for_cli(width=48)
+        # Content should be wrapped across multiple lines
+        lines = text.split("\n")
+        content_lines = [line for line in lines if "Implement" in line or "tests" in line]
+        assert len(content_lines) >= 2
+
+    def test_minimum_width(self):
+        store = TodoStore()
+        text = store.format_for_cli(width=10)  # Below minimum of 48
+        # Should still produce valid output
+        assert "HERMES TODO" in text
 
 
 class TestOrderPreservation:

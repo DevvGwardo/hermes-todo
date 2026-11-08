@@ -7,18 +7,29 @@ from typing import Dict, List, Optional
 
 ACTION_VERBS = {
     "add",
+    "alert",
+    "analyze",
+    "archive",
     "audit",
+    "backup",
+    "benchmark",
+    "bisect",
     "build",
     "check",
+    "cherry-pick",
     "clean",
+    "commit",
     "compare",
+    "configure",
     "create",
     "debug",
+    "delete",
     "deploy",
     "design",
     "document",
     "draft",
     "edit",
+    "encrypt",
     "explain",
     "extract",
     "fetch",
@@ -27,42 +38,69 @@ ACTION_VERBS = {
     "fix",
     "format",
     "generate",
+    "handle",
     "implement",
     "improve",
+    "initialize",
     "inspect",
+    "install",
     "investigate",
     "launch",
+    "lint",
     "list",
+    "merge",
     "migrate",
+    "monitor",
     "move",
+    "notify",
     "optimize",
     "organize",
     "plan",
     "polish",
     "prepare",
+    "profile",
+    "provision",
+    "pull",
+    "purge",
+    "push",
+    "rebase",
     "refactor",
     "release",
+    "remove",
     "rename",
     "repair",
     "replace",
     "research",
+    "restore",
     "review",
+    "rollback",
     "run",
+    "sanitize",
+    "scaffold",
     "scan",
+    "schedule",
+    "seed",
+    "setup",
     "ship",
     "show",
+    "sign",
     "sort",
     "summarize",
+    "support",
     "test",
     "track",
     "triage",
     "update",
     "upgrade",
+    "validate",
     "verify",
     "write",
 }
 
 LEADING_PREFIXES = (
+    "i would like you to ",
+    "do you mind ",
+    "would you mind ",
     "please help me ",
     "please ",
     "can you ",
@@ -159,6 +197,10 @@ def _extract_line_tasks(text: str) -> List[str]:
         if cleaned:
             tasks.append(cleaned)
 
+    if len(marked_lines) >= 2:
+        # Lines extracted via LIST_MARKER_RE are always task-like
+        return _dedupe([_polish_task(task) for task in tasks])
+
     return _dedupe([task for task in (_polish_task(task) for task in tasks) if _looks_like_task(task)])
 
 
@@ -201,11 +243,15 @@ def _split_segments(text: str) -> List[str]:
 
 
 def _split_coordinated_clause(clause: str) -> List[str]:
-    clause = _normalize_task(clause)
     if not clause:
         return []
 
-    parts = re.split(r"\s+(?:and|&)\s+", clause)
+    # Strip leading coordinating conjunctions (e.g. "and deploy" → "deploy")
+    clause = re.sub(r"^(?:and|or|&)\s+", "", clause, flags=re.IGNORECASE).strip()
+    if not clause:
+        return []
+
+    parts = re.split(r"\s+(?:and|or|&)\s+", clause, flags=re.IGNORECASE)
     if len(parts) < 2:
         return [clause]
 
@@ -235,11 +281,25 @@ def _split_coordinated_clause(clause: str) -> List[str]:
 
 def _normalize_prompt(prompt: str) -> str:
     prompt = prompt.replace("\r\n", "\n").replace("\r", "\n")
-    return re.sub(r"[ \t]+", " ", prompt).strip()
+    prompt = re.sub(r"[ \t]+", " ", prompt)
+    # Strip decorative dividers early to prevent !!!/--- from confusing
+    # sentence-boundary splitters in _split_segments
+    prompt = re.sub(r"\s*!{3,}\s*", " ", prompt)
+    prompt = re.sub(r"\s*-{3,}\s*", " ", prompt)
+    return prompt.strip()
 
 
 def _normalize_task(task: str) -> str:
+    # Strip markdown formatting tokens
+    task = re.sub(r"\*{1,2}([^*]+)\*{1,2}", r"\1", task)
+    task = re.sub(r"_{1,2}([^_]+)_{1,2}", r"\1", task)
+    task = re.sub(r"`([^`]+)`", r"\1", task)
+
     task = re.sub(r"\s+", " ", task).strip(" \t\n\r,;:.")
+    lowered = task.lower()
+
+    # Strip "step N:" prefixes
+    task = re.sub(r"^step\s+\d+[:\s]*", "", task, flags=re.IGNORECASE).strip()
     lowered = task.lower()
 
     changed = True
@@ -247,14 +307,21 @@ def _normalize_task(task: str) -> str:
         changed = False
         for prefix in LEADING_PREFIXES:
             if lowered.startswith(prefix):
-                task = task[len(prefix):].strip()
+                task = task[len(prefix) :].strip()
                 lowered = task.lower()
                 changed = True
         for filler in LEADING_FILLERS:
             if lowered.startswith(filler):
-                task = task[len(filler):].strip()
+                task = task[len(filler) :].strip()
                 lowered = task.lower()
                 changed = True
+
+    # Strip !!! and --- from middle of text (consume surrounding whitespace)
+    task = re.sub(r"\s*!{3,}\s*", " ", task)
+    task = re.sub(r"\s*-{3,}\s*", " ", task)
+
+    # Safety-net: collapse any remaining multiple spaces
+    task = re.sub(r"\s{2,}", " ", task)
 
     return task.strip(" \t\n\r,;:.")
 
@@ -270,7 +337,7 @@ def _looks_like_task(task: str) -> bool:
     if _lead_verb(task):
         return True
 
-    return len(words) >= 2
+    return len(words) >= 3
 
 
 def _polish_task(task: str) -> str:
@@ -280,7 +347,9 @@ def _polish_task(task: str) -> str:
         return task
 
     first = words[0]
-    if first.lower() in ACTION_VERBS and first[:1].islower():
+    if first.lower() in ACTION_VERBS:
+        if first == first.upper() and len(first) > 1:
+            return task.capitalize()
         return f"{first.capitalize()}{task[len(first):]}"
 
     return task

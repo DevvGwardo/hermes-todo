@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from .planner import build_todos_from_tasks, extract_tasks
 from .store import TodoStore
+from .types import count_by_status
 
 
 def todo_cli_from_result(result: str) -> Optional[str]:
@@ -70,21 +71,18 @@ def todo_tool(
         items = store.read()
 
     # Detect auto-clear: had items before, now empty after a write
-    auto_cleared = had_items_before and not items and todos is not None
+    auto_cleared = had_items_before and not items and (todos is not None or launched_from_prompt)
 
-    pending = sum(1 for i in items if i["status"] == "pending")
-    in_progress = sum(1 for i in items if i["status"] == "in_progress")
-    completed = sum(1 for i in items if i["status"] == "completed")
-    cancelled = sum(1 for i in items if i["status"] == "cancelled")
+    counts = count_by_status(items)
 
-    result = {
+    result: Dict[str, Any] = {
         "todos": items,
         "summary": {
             "total": len(items),
-            "pending": pending,
-            "in_progress": in_progress,
-            "completed": completed,
-            "cancelled": cancelled,
+            "pending": counts["pending"],
+            "in_progress": counts["in_progress"],
+            "completed": counts["completed"],
+            "cancelled": counts["cancelled"],
         },
         "cli": store.format_for_cli(),
         "injection": store.format_for_injection(),
